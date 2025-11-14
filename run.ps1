@@ -10,27 +10,15 @@ Set-Location $ProjDir
 $Venv   = Join-Path $ProjDir ".venv_umd2"
 $Req    = Join-Path $ProjDir "requirements.txt"
 
-# --- Create .\run.cmd on first run (so you can just do: .\run) ---
-$RunCmd = Join-Path $ProjDir "run.cmd"
-if (-not (Test-Path $RunCmd)) {
-@"
-@echo off
-setlocal
-set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" %*
-exit /b %ERRORLEVEL%
-"@ | Out-File -FilePath $RunCmd -Encoding ASCII -Force
-}
-
 # --- Flags / Mode ---
 $FORCE = $false
-$MODE  = "gui"  # default
+$MODE  = "gui"
 function Shift-Args { param([ref]$A) if ($A.Value.Count -gt 0) { $A.Value = $A.Value[1..($A.Value.Count-1)] } else { $A.Value = @() } }
 if     ($Args.Count -gt 0 -and $Args[0] -eq "--force-install") { $FORCE = $true;  Shift-Args ([ref]$Args) }
 if     ($Args.Count -gt 0 -and $Args[0] -eq "--backend")       { $MODE  = "backend"; Shift-Args ([ref]$Args) }
 elseif ($Args.Count -gt 0 -and $Args[0] -eq "--gui")           { $MODE  = "gui";     Shift-Args ([ref]$Args) }
 
-# --- Locate system Python ---
+# --- Find system Python ---
 $Py = $null
 try { $Py = (Get-Command py -ErrorAction Stop).Source } catch { }
 if (-not $Py) { try { $Py = (Get-Command python -ErrorAction Stop).Source } catch { } }
@@ -77,4 +65,3 @@ if ($MODE -eq "backend") {
   & $Vpy (Join-Path $ProjDir "gui.py") @Args
 }
 exit $LASTEXITCODE
-
