@@ -10,6 +10,26 @@ Set-Location $ProjDir
 $Venv   = Join-Path $ProjDir ".venv_umd2"
 $Req    = Join-Path $ProjDir "requirements.txt"
 
+# --- Ensure run.cmd exists (lets you type .\run with ExecutionPolicy Bypass) ---
+$RunCmd = Join-Path $ProjDir "run.cmd"
+if (-not (Test-Path $RunCmd)) {
+    Set-Content -Path $RunCmd -Encoding ASCII -Value @'
+@echo off
+setlocal
+set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" %*
+exit /b %ERRORLEVEL%
+'@
+    Write-Host "[RUN] Created run.cmd (launcher with ExecutionPolicy Bypass)."
+
+    # Re-exec through run.cmd once so user can use .\run immediately
+    if ($env:RUN_REEXECED -ne "1" -and ($MyInvocation.MyCommand.Name -ieq "run.ps1")) {
+        $env:RUN_REEXECED = "1"
+        & $RunCmd @Args
+        exit $LASTEXITCODE
+    }
+}
+
 # --- Flags / Mode ---
 $FORCE = $false
 $MODE  = "gui"
