@@ -1,117 +1,66 @@
 #!/usr/bin/env bash
-# run.sh
-# Setup a venv, install deps, and run either:
-#   - umd2.py  (default, CLI backend)
-#   - gui.py   (when --gui is passed)
-
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY_SCRIPT="${SCRIPT_DIR}/umd2.py"
-GUI_SCRIPT="${SCRIPT_DIR}/gui.py"
-VENV_DIR="${SCRIPT_DIR}/.venv_umd2"
+# --- Paths ---
+PROJ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJ_DIR"
+VENV="$PROJ_DIR/.venv_umd2"
+REQ="$PROJ_DIR/requirements.txt"
 
-usage() {
-cat <<'USAGE'
-Usage:
-  ./run.sh [--install-only] [--force-reinstall] [--gui] -- <args passed to umd2.py>
+# --- Make ./run symlink (and re-exec through it on first run for immediate use) ---
+if [[ ! -e "$PROJ_DIR/run" ]]; then
+  ln -s "run.sh" "run" 2>/dev/null || true
+  if [[ "$(basename "$0")" = "run.sh" ]]; then
+    exec "$PROJ_DIR/run" "$@"
+  fi
+fi
 
-Examples (backend / CLI):
-  ./run.sh -- --file LatheG4_displacement_file.txt --emit onstep
-  cat LatheG4_displacement_file.txt | ./run.sh -- --fs 1000 --decimate 4 --out csv
-  ./run.sh -- --serial /dev/tty.usbmodem1101 --baud 921600 --stepnm 79.124
+# --- Flags / Mode ---
+FORCE=0
+MODE="gui"  # default
+case "${1:-}" in
+  --force-install) FORCE=1; shift;;
+esac
+case "${1:-}" in
+  --backend) MODE="backend"; shift;;
+  --gui) MODE="gui"; shift;;
+esac
 
-GUI mode:
-  ./run.sh --gui
-  (GUI will call umd2.py under the hood. No extra args needed.)
+# --- venv (no activation needed) ---
+if [[ ! -d "$VENV" ]]; then
+  echo "[RUN] Creating venv at $VENV"
+  python3 -m venv "$VENV"
+fi
 
-Notes:
-  - Anything after the first literal -- is passed directly to umd2.py.
-  - Use --install-only to just create/update the venv and exit.
-  - Use --force-reinstall to rebuild the venv from scratch.
-USAGE
-}
+# --- deps (install when requirements.txt changes or --force-install) ---
+REQ_HASH_FILE="$VENV/.req_hash"
+CUR_HASH="$("$VENV/bin/python" - <<'PY' "$REQ"
+import sys, pathlib, hashlib
+p = pathlib.Path(sys.argv[1])
+print(hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else "")
+PY
+)"
+OLD_HASH="$(cat "$REQ_HASH_FILE" 2>/dev/null || echo "")"
 
-# Parse script-level flags (before the --)
-INSTALL_ONLY=0
-FORCE_REINSTALL=0
-RUN_GUI=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --install-only)     INSTALL_ONLY=1; shift ;;
-    --force-reinstall)  FORCE_REINSTALL=1; shift ;;
-    --gui)              RUN_GUI=1; shift ;;
-    --help|-h)          usage; exit 0 ;;
-    --)                 shift; break ;;  # everything after this goes to umd2.py
-    *)                  break ;;         # treat remaining as umd2.py args (without explicit --)
-  esac
-done
-
-# Choose a Python
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN="python3"
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN="python"
+if [[ ! -f "$REQ" ]]; then
+  echo "[RUN] WARNING: requirements.txt not found; skipping installs." >&2
+elif [[ "$FORCE" -eq 1 || "$CUR_HASH" != "$OLD_HASH" ]]; then
+  echo "[RUN] Installing/Updating deps from requirements.txt"
+  "$VENV/bin/python" -m pip install -U pip >/dev/null
+  "$VENV/bin/pip" install -r "$REQ"
+  echo "$CUR_HASH" > "$REQ_HASH_FILE"
 else
-  echo "ERROR: python3 (or python) not found on PATH." >&2
-  exit 1
+  echo "[RUN] Deps up-to-date (requirements.txt unchanged) — skipping install"
 fi
 
-# (Re)create venv if needed
-if [[ $FORCE_REINSTALL -eq 1 && -d "$VENV_DIR" ]]; then
-  rm -rf "$VENV_DIR"
-fi
-if [[ ! -d "$VENV_DIR" ]]; then
-  "$PYTHON_BIN" -m venv "$VENV_DIR"
-fi
-
-# Activate venv
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-
-# Upgrade pip and install baseline deps
-python -m pip install --upgrade pip >/dev/null
-# pyserial is only needed for --serial mode; install unconditionally (small).
-python -m pip install --quiet pyserial
-
-# Install GUI deps if requested
-ensure_gui_deps() {
-  # PySide6 + pyqtgraph are the only extras
-  python -m pip install --quiet PySide6 pyqtgraph
-}
-
-if [[ $RUN_GUI -eq 1 ]]; then
-  # Sanity checks for GUI
-  if [[ ! -f "$GUI_SCRIPT" ]]; then
-    echo "ERROR: Cannot find gui.py at: $GUI_SCRIPT" >&2
-    exit 1
-  fi
-  if [[ ! -f "$PY_SCRIPT" ]]; then
-    echo "ERROR: Cannot find umd2.py at: $PY_SCRIPT (GUI calls it under the hood)" >&2
-    exit 1
-  fi
-  ensure_gui_deps
-fi
-
-if [[ $INSTALL_ONLY -eq 1 ]]; then
-  echo "Virtualenv ready at: $VENV_DIR"
-  if [[ $RUN_GUI -eq 1 ]]; then
-    echo "GUI deps installed. Launch with: ./run.sh --gui"
-  else
-    echo "Example: ./run.sh -- --file LatheG4_displacement_file.txt --emit onstep"
-  fi
-  exit 0
-fi
-
-if [[ $RUN_GUI -eq 1 ]]; then
-  # Run GUI
-  exec python "$GUI_SCRIPT"
+# --- Launch ---
+if [[ "$MODE" == "backend" ]]; then
+  echo "[RUN] Backend mode → python umd2.py $*"
+  exec "$VENV/bin/python" "$PROJ_DIR/umd2.py" "$@"
 else
-  # Backend mode: sanity check umd2.py
-  if [[ ! -f "$PY_SCRIPT" ]]; then
-    echo "ERROR: Cannot find umd2.py at: $PY_SCRIPT" >&2
-    exit 1
-  fi
-  # Run umd2.py with any remaining args
-  exec python "$PY_SCRIPT" "$@"
+  echo "[RUN] GUI mode (default) → python gui.py"
+  echo "[RUN] Tips:"
+  echo "       • For backend: ./run.sh --backend --serial /dev/tty.usbmodemXXXX --baud 921600 --out jsonl"
+  echo "       • Force reinstall deps: ./run.sh --force-install"
+  exec "$VENV/bin/python" "$PROJ_DIR/gui.py" "$@"
 fi

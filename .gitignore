@@ -5,6 +5,7 @@ ENV/
 env/
 .venv_*/
 .venv*/
+run
 
 # Python cache
 __pycache__/
@@ -14,3 +15,6 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+#notes
+need.txt
